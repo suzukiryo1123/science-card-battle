@@ -84,3 +84,23 @@ body {
   font-weight: 700;
   color: var(--accent);
 }
+
+/* --- play.html 用の軽い装飾 --- */
+.setup-row { margin: .5rem 0; }
+.hp-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+.hp-bar { height: 16px; background:#2a2a2a; border-radius: 8px; overflow:hidden; }
+.hp-bar > div { height: 100%; width: 100%; background:#4caf50; transition: width .25s; }
+.hp-wrap .side:last-child .hp-bar > div { background:#e57373; }
+
+.round-box { display:flex; align-items:center; gap:1rem; margin: .5rem 0 1rem; }
+.timer { flex:1; position:relative; height:12px; background:#333; border-radius:6px; }
+.timer-bar { position:absolute; left:0; top:0; bottom:0; width:100%; background:#ffd54f; transition: width .1s linear; }
+.timer + span { margin-left:.5rem; }
+
+.choices { display:grid; grid-template-columns: 1fr 1fr; gap:.5rem; max-width:560px; }
+.choices button { padding:.6rem .8rem; font-size:1rem; border:1px solid #555; background:#111; color:#eee; border-radius:.5rem; cursor:pointer; }
+.choices button:hover { background:#222; }
+.log { max-height: 220px; overflow:auto; background:#0b0b0b; border:1px solid #222; padding:.5rem; border-radius:.5rem; }
+.msg { margin:.5rem 0 1rem; font-weight:600; }
+.note { color:#aaa; }
+
