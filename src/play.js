@@ -8,7 +8,6 @@ const CPU_TIME_JITTER = 6;   // ばらつき（±）
 let cards = [];
 let dungeons = [];
 let selectedCard = null;
-let selectedDungeonIds = [];
 
 let myHP = 0, cpuHP = 0, myMaxHP = 0, cpuMaxHP = 0;
 let quizPool = [];   // 出題リスト（自分2つ + CPU2つの合体）
@@ -18,19 +17,46 @@ let timerId = null;
 let remain = ROUND_TIME;
 let answered = false;
 
-// --- ユーティリティ ---
 const $ = (sel) => document.querySelector(sel);
 const log = (t) => { const d = document.createElement('div'); d.textContent = t; $('#log').prepend(d); };
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+// 20s→2.0倍、10s→1.0倍、0s→0倍（直線）
+const timeMultiplier = (rem) => clamp(rem / 10.0, 0, 2);
 
-// 残り時間→倍率 (20sで2倍、10sで1倍、0sで0倍の直線)
-function timeMultiplier(rem){
-  const m = rem / 10.0;     // 20→2, 10→1, 0→0
-  return clamp(m, 0, 2);
+// 表記ゆれ吸収（大文字小文字・全半角・下付き数字・空白）
+function norm(s) {
+  return (s ?? '').toString()
+    .normalize('NFKC')
+    .trim()
+    .toLowerCase()
+    .replace(/[₀₁₂₃₄₅₆₇₈₉]/g, (c) => '0123456789'['₀₁₂₃₄₅₆₇₈₉'.indexOf(c)])
+    .replace(/\s+/g, '');
 }
 
-// カードのタイプに応じた攻撃値
+// 正誤判定（answers/answerText/regex/choices+answer に対応）
+function isCorrect(prob, input) {
+  const n = norm(input);
+  if (prob.regex) {
+    try { return new RegExp(prob.regex, 'i').test(input); } catch(e) {}
+  }
+  if (Array.isArray(prob.answers)) {
+    return prob.answers.some(a => norm(a) === n);
+  }
+  if (typeof prob.answerText === 'string') {
+    return norm(prob.answerText) === n;
+  }
+  if (typeof prob.answer === 'string') {
+    return norm(prob.answer) === n;
+  }
+  if (typeof prob.answer === 'number' && Array.isArray(prob.choices)) {
+    const text = prob.choices[prob.answer];
+    return norm(text) === n;
+  }
+  return false;
+}
+
+// カードタイプの攻撃力を使用
 function attackOf(card){
   const t = card.type.toUpperCase();
   if (t === 'PHY') return card.phy;
@@ -38,7 +64,6 @@ function attackOf(card){
   return card.bio;
 }
 
-// --- 初期化 ---
 async function loadAll() {
   const [cardsRes, dungRes] = await Promise.all([
     fetch('data/cards.json'),
@@ -69,39 +94,39 @@ async function loadAll() {
     box.appendChild(label);
   });
 
-  // スタートイベント
   $('#startBtn').addEventListener('click', startGame);
 }
 
 async function startGame() {
-  // カード決定
   const name = $('#cardSelect').value;
   selectedCard = cards.find(c => c.name === name);
   myHP = myMaxHP = selectedCard.hp;
-  // CPUはランダムで別カード（なければ同じでもOK）
+
+  // CPUは適当に別カード（なければ同じでもOK）
   const cpuCard = (cards.filter(c => c.rarity === 'SR' && c.name !== name)[0] || selectedCard);
   cpuHP = cpuMaxHP = cpuCard.hp;
 
-  // ダンジョン選択チェック
+  // ダンジョンはチェック2つ
   const checked = [...document.querySelectorAll('#dungeonList input[type="checkbox"]:checked')].map(i => i.value);
   if (checked.length !== 2) { alert('ダンジョンは2つ選んでください'); return; }
-  selectedDungeonIds = checked;
-
-  // CPU側も2つ適当に選ぶ（今は同じにしておく）
-  const opponentDungeonIds = checked;
+  const opponentDungeonIds = checked; // 今は同じものをCPUにも
 
   // 出題プールを合体してシャッフル
   function pickProblems(ids){
     return ids.flatMap(id => (dungeons.find(d => d.id === id)?.problems || []));
   }
-  quizPool = [...pickProblems(selectedDungeonIds), ...pickProblems(opponentDungeonIds)];
-  quizPool = quizPool.sort(() => Math.random() - 0.5);
+  quizPool = [...pickProblems(checked), ...pickProblems(opponentDungeonIds)]
+              .sort(() => Math.random() - 0.5);
 
   // UI切替
   $('#setup').style.display = 'none';
   $('#battle').style.display = '';
   updateHpBars();
   nextRound();
+
+  // 入力イベント（Enter/ボタン）
+  $('#submitBtn').onclick = () => answerFromInput();
+  $('#answerInput').onkeydown = (e) => { if (e.key === 'Enter') answerFromInput(); };
 }
 
 function updateHpBars(){
@@ -122,13 +147,10 @@ function nextRound(){
   const prob = quizPool[cur];
   $('#question').textContent = prob.q;
 
-  const choices = $('#choices'); choices.innerHTML = '';
-  prob.choices.forEach((ch, idx) => {
-    const b = document.createElement('button');
-    b.textContent = ch;
-    b.addEventListener('click', () => answer(idx));
-    choices.appendChild(b);
-  });
+  // 入力欄をリセット＆フォーカス
+  const $in = $('#answerInput');
+  $in.value = '';
+  setTimeout(() => $in.focus(), 50);
 
   // タイマースタート
   answered = false;
@@ -145,49 +167,51 @@ function tick(){
 
   if (remain <= 0){
     clearInterval(timerId);
-    if (!answered) answer(null, true); // 時間切れ
+    if (!answered) answerFromInput(true); // 時間切れ（未入力扱い）
   }
 }
 
-function answer(choiceIdx, timeup=false){
+function answerFromInput(timeup=false){
   if (answered) return;
   answered = true;
   clearInterval(timerId);
 
+  const input = $('#answerInput').value;
   const prob = quizPool[cur];
-  const correct = (choiceIdx === prob.answer);
 
-  // プレイヤーのダメージ計算
+  const correct = !timeup && isCorrect(prob, input);
+
+  // プレイヤー側
   const myAtk = attackOf(selectedCard);
   const myMult = timeMultiplier(remain);
-  const myDmg = (correct && !timeup) ? Math.round(myAtk * myMult) : 0;
+  const myDmg = correct ? Math.round(myAtk * myMult) : 0;
 
-  // CPUの解答を同時処理（今は確率で正解、ランダム時間）
+  // CPU（確率で正解、ランダム速度）
   const cpuTimeUsed = clamp(CPU_TIME_MEAN + (Math.random()*2-1)*CPU_TIME_JITTER, 1, 19);
   const cpuRemain = ROUND_TIME - cpuTimeUsed;
   const cpuCorrect = Math.random() < CPU_CORRECT_P;
-  const cpuAtk = myAtk; // 簡易化：同じSR帯で近い数値なので同等扱い
+  const cpuAtk = myAtk; // 簡易
   const cpuMult = timeMultiplier(cpuRemain);
   const cpuDmg = cpuCorrect ? Math.round(cpuAtk * cpuMult) : 0;
 
-  // 同時に適用
+  // ダメージ適用
   cpuHP -= myDmg;
   myHP  -= cpuDmg;
   updateHpBars();
 
-  // メッセージ
-  $('#msg').textContent = correct ? `正解！ 与ダメージ ${myDmg}` : '不正解… 与ダメージ 0';
+  // 表示
+  $('#msg').textContent = correct ? `正解！ 与ダメージ ${myDmg}` :
+                                   (timeup ? '時間切れ… 与ダメージ 0' : '不正解… 与ダメージ 0');
   log(`あなた: 残り${remain.toFixed(1)}s × 倍率${myMult.toFixed(2)} → ${myDmg}ダメージ`);
   log(`CPU   : 残り${cpuRemain.toFixed(1)}s × 倍率${cpuMult.toFixed(2)} → ${cpuDmg}ダメージ`);
 
   setTimeout(() => {
     if (myHP <= 0 || cpuHP <= 0){ endGame(); }
     else { nextRound(); }
-  }, 800);
+  }, 700);
 }
 
 function endGame(noMoreQuestions=false){
-  $('#choices').innerHTML = '';
   if (myHP <= 0 && cpuHP <= 0){
     $('#msg').textContent = '引き分け！';
   } else if (myHP <= 0){
