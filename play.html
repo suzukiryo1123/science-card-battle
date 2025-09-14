@@ -12,7 +12,6 @@
     <p class="subtitle"><a href="./">← カード一覧に戻る</a></p>
   </header>
 
-  <!-- セットアップ -->
   <section id="setup">
     <h2>セットアップ</h2>
     <div class="setup-row">
@@ -27,7 +26,6 @@
     <p class="note">※ 今はCPU対戦＆各カードのタイプ攻撃力を使用（じゃんけんは後で追加）</p>
   </section>
 
-  <!-- バトル -->
   <main id="battle" style="display:none">
     <div class="hp-wrap">
       <div class="side">
@@ -50,7 +48,10 @@
 
     <section id="quiz">
       <h2 id="question">問題が読み込み中…</h2>
-      <div class="choices" id="choices"></div>
+      <div class="answer-box">
+        <input type="text" id="answerInput" placeholder="ここに解答を入力（Enterで送信）" autocomplete="off" />
+        <button id="submitBtn">解答する</button>
+      </div>
       <div class="msg" id="msg"></div>
     </section>
 
