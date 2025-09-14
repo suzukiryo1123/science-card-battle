@@ -1,0 +1,32 @@
+[
+  {
+    "rarity": "SR",
+    "name": "NEWTON",
+    "type": "PHY",
+    "hp": 300,
+    "phy": 90,
+    "che": 45,
+    "bio": 45,
+    "image": "assets/cards/SR/newton.png"
+  },
+  {
+    "rarity": "SR",
+    "name": "DARWIN",
+    "type": "BIO",
+    "hp": 300,
+    "phy": 45,
+    "che": 45,
+    "bio": 90,
+    "image": "assets/cards/SR/darwin.png"
+  },
+  {
+    "rarity": "SR",
+    "name": "MENDELEEV",
+    "type": "CHE",
+    "hp": 300,
+    "phy": 45,
+    "che": 90,
+    "bio": 45,
+    "image": "assets/cards/SR/mendeleev.png"
+  }
+]
