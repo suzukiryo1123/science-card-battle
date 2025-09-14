@@ -1,0 +1,22 @@
+[
+  {
+    "id": "phy_basic",
+    "name": "物理 基礎",
+    "type": "PHY",
+    "problems": [
+      { "id": "p1", "q": "音はどんな波？", "choices": ["縦波", "横波", "定常波", "電磁波"], "answer": 0 },
+      { "id": "p2", "q": "速度の単位は？", "choices": ["m/s", "m", "m/s^2", "N"], "answer": 0 },
+      { "id": "p3", "q": "電荷の記号は？", "choices": ["Q", "I", "V", "R"], "answer": 0 }
+    ]
+  },
+  {
+    "id": "che_basic",
+    "name": "化学 基礎",
+    "type": "CHE",
+    "problems": [
+      { "id": "c1", "q": "水の化学式は？", "choices": ["H₂O", "CO₂", "O₂", "NaCl"], "answer": 0 },
+      { "id": "c2", "q": "原子番号1の元素は？", "choices": ["He", "H", "O", "C"], "answer": 1 },
+      { "id": "c3", "q": "モルの単位記号は？", "choices": ["mol", "m", "N", "J"], "answer": 0 }
+    ]
+  }
+]
