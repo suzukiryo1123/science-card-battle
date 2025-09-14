@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Science Card Battle – 練習対戦(β)</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <h1>練習対戦（β）</h1>
+    <p class="subtitle"><a href="./">← カード一覧に戻る</a></p>
+  </header>
+
+  <!-- セットアップ -->
+  <section id="setup">
+    <h2>セットアップ</h2>
+    <div class="setup-row">
+      <label>カードを選ぶ：</label>
+      <select id="cardSelect"></select>
+    </div>
+    <div class="setup-row">
+      <label>ダンジョンを2つ選ぶ：</label>
+      <div id="dungeonList"></div>
+    </div>
+    <button id="startBtn">対戦スタート</button>
+    <p class="note">※ 今はCPU対戦＆各カードのタイプ攻撃力を使用（じゃんけんは後で追加）</p>
+  </section>
+
+  <!-- バトル -->
+  <main id="battle" style="display:none">
+    <div class="hp-wrap">
+      <div class="side">
+        <div>あなた HP: <span id="myHpText">0</span></div>
+        <div class="hp-bar"><div id="myHpBar"></div></div>
+      </div>
+      <div class="side">
+        <div>CPU HP: <span id="cpuHpText">0</span></div>
+        <div class="hp-bar"><div id="cpuHpBar"></div></div>
+      </div>
+    </div>
+
+    <div class="round-box">
+      <div>ラウンド: <span id="roundNo">1</span></div>
+      <div class="timer">
+        <div class="timer-bar" id="timerBar"></div>
+        <span id="timeLeft">20.0s</span>
+      </div>
+    </div>
+
+    <section id="quiz">
+      <h2 id="question">問題が読み込み中…</h2>
+      <div class="choices" id="choices"></div>
+      <div class="msg" id="msg"></div>
+    </section>
+
+    <section>
+      <h3>ログ</h3>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+
+  <script src="src/play.js"></script>
+</body>
+</html>
