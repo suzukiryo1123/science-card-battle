@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Science Card Battle — SRプレビュー</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <h1>Science Card Battle</h1>
+    <p class="subtitle">SRカードプレビュー</p>
+  </header>
+
+  <main>
+    <div id="card-grid" class="grid"></div>
+
+    <!-- カードのテンプレート -->
+    <template id="card-tpl">
+      <article class="card">
+        <img class="card-img" alt="" loading="lazy" />
+        <div class="badge"><span class="rarity"></span> · <span class="type"></span></div>
+        <h3 class="name"></h3>
+        <dl class="stats">
+          <div><dt>HP</dt><dd class="hp"></dd></div>
+          <div><dt>PHY</dt><dd class="phy"></dd></div>
+          <div><dt>CHE</dt><dd class="che"></dd></div>
+          <div><dt>BIO</dt><dd class="bio"></dd></div>
+        </dl>
+      </article>
+    </template>
+  </main>
+
+  <footer class="site-footer">© Science Card Battle</footer>
+  <script src="src/app.js"></script>
+</body>
+</html>
