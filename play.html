@@ -2,117 +2,156 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Science Card Battle - 入力式バトル</title>
   <link rel="stylesheet" href="styles.css" />
   <style>
-    .wrap{max-width:960px;margin:16px auto;padding:0 12px}
+    .wrap{max-width:980px;margin:18px auto;padding:0 12px}
     header h1{font-size:1.25rem;margin:8px 0}
     .row{display:grid;gap:12px}
-    @media(min-width:720px){.row{grid-template-columns:1fr 1fr}}
-    .cardbox{border:1px solid #333;padding:10px;border-radius:8px}
+    @media(min-width:760px){.row{grid-template-columns:1fr 1fr}}
+    .box{border:1px solid #333;border-radius:10px;padding:12px;background:#111}
+    .muted{opacity:.75}
     .hp{font-weight:bold}
-    .bar{height:10px;background:#eee;border-radius:6px;overflow:hidden}
+    .bar{height:10px;background:#222;border-radius:6px;overflow:hidden}
     .bar>i{display:block;height:100%;background:#4caf50;width:100%}
-    .qbox{margin-top:12px}
-    .q{font-size:1.1rem;margin:8px 0}
-    .log{font-family:ui-monospace,monospace;font-size:.9rem;white-space:pre-wrap;background:#0b0b0b;color:#dcdcdc;padding:10px;border-radius:6px;height:180px;overflow:auto}
-    .pill{display:inline-block;background:#123;color:#9fd;padding:2px 8px;border-radius:999px;margin-right:6px;font-size:.8rem}
+    img.card-img{width:100%;max-width:280px;border-radius:10px;display:block}
+    .pill{display:inline-block;background:#173047;color:#aee;padding:2px 9px;border-radius:999px;margin-right:6px;font-size:.8rem}
     button{padding:8px 12px}
-    select,input[type=text]{padding:6px 8px}
-    .muted{opacity:.7}
-    .choice label{margin-right:12px}
+    select,input[type=text]{padding:7px 8px}
+    /* カウントダウン */
+    #countBox{display:none;align-items:center;justify-content:center;height:40vh}
+    .big-count{font-size:14rem;line-height:1;font-weight:900;text-align:center;letter-spacing:.05em}
+    /* 画面切替 */
+    .screen{display:none}
+    .screen.active{display:block}
+    /* 問題 */
+    .q{font-size:1.15rem;margin:8px 0}
+    .log{font-family:ui-monospace,monospace;font-size:.9rem;white-space:pre-wrap;background:#0b0b0b;color:#dcdcdc;padding:10px;border-radius:6px;height:180px;overflow:auto}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <h1>Science Card Battle – 入力式 同時早解き（vs CPU）</h1>
-      <p class="muted">
-        1マッチ最大3セット・2セット先取。各セット開始時に5秒以内で PHY / CHE / BIO を選択し、<b>じゃんけん</b>（PHY▶CHE▶BIO▶PHY）で
-        勝ち:×1.5 / 負け:×0.5 / あいこ:×1.0 を本セット中の攻撃に適用。<br>
-        問題にはタイプを持たせず、ダメージは「選択タイプの攻撃値 × じゃんけん倍率 × 残り時間倍率（20s→2.0、10s→1.0、10s未満は1.0）」。
-      </p>
-    </header>
+<div class="wrap">
+  <header>
+    <h1>Science Card Battle – 入力式 同時早解き（vs CPU）</h1>
+    <p class="muted">
+      1マッチ最大3セット（2先取）。各セット開始時に5秒で PHY / CHE / BIO を選択し、
+      <b>じゃんけん</b>（PHY▶CHE▶BIO▶PHY）で 倍率：勝×1.5 / 負×0.5 / あいこ×1.0。<br>
+      問題にはタイプを持たせません。ダメージ＝選択タイプ攻撃値 × RPS倍率 × 残り時間倍率（20s→2.0、10s→1.0）。
+      不正解時は残り時間に応じた<b>ペナルティ</b>で自分にダメージ。
+    </p>
+  </header>
 
-    <section class="cardbox">
-      <h2>セットアップ</h2>
-      <div class="row">
-        <div>
-          <label>自分のカード：</label>
-          <select id="playerCard"></select>
-          <div style="margin-top:8px">
-            <label>自分のダンジョン（2つ）：</label><br/>
-            <div id="myDungeons"></div>
+  <!-- ① セットアップ画面 -->
+  <section id="setupBox" class="screen active box">
+    <h2>セットアップ</h2>
+    <div class="row">
+      <div>
+        <h3>あなた</h3>
+        <label>カード：</label>
+        <select id="playerCard"></select>
+        <div class="row" style="margin-top:8px">
+          <img id="pCardImg" class="card-img" alt="player card preview"/>
+          <div>
+            <div id="pStats" class="muted"></div>
+            <div style="margin-top:10px">
+              <b>ダンジョン（2つ）</b><br/>
+              <div id="myDungeons"></div>
+            </div>
           </div>
         </div>
-        <div>
-          <label>CPUのカード：</label>
-          <select id="cpuCard"></select>
-          <div style="margin-top:8px">
-            <label>CPUのダンジョン（2つ）：</label><br/>
-            <div id="cpuDungeons"></div>
+      </div>
+      <div>
+        <h3>CPU</h3>
+        <label>カード：</label>
+        <select id="cpuCard"></select>
+        <div class="row" style="margin-top:8px">
+          <img id="cCardImg" class="card-img" alt="cpu card preview"/>
+          <div>
+            <div id="cStats" class="muted"></div>
+            <div style="margin-top:10px">
+              <b>ダンジョン（2つ）</b><br/>
+              <div id="cpuDungeons"></div>
+            </div>
           </div>
         </div>
       </div>
-      <div style="margin-top:12px">
-        <button id="startBtn">マッチ開始</button>
-      </div>
-    </section>
+    </div>
+    <button id="startBtn" style="margin-top:12px">マッチ開始</button>
+  </section>
 
-    <section class="cardbox" style="margin-top:12px">
-      <h2>マッチ情報</h2>
-      <div>セット: <span id="setCounter">0</span> / 3　|　スコア: あなた <b id="scoreP">0</b> - <b id="scoreC">0</b> CPU</div>
-      <div style="margin-top:6px">本セットの選択タイプ:
-        <span class="pill" id="pChoicePill">-</span>
-        <span class="pill" id="cChoicePill">-</span>
-        <span class="muted" id="rpsNote"></span>
-      </div>
-    </section>
+  <!-- ② マッチ情報（常時） -->
+  <section class="box" style="margin-top:12px">
+    <h2>マッチ情報</h2>
+    <div>セット: <span id="setCounter">0</span> / 3　|　スコア: あなた <b id="scoreP">0</b> - <b id="scoreC">0</b> CPU</div>
+    <div style="margin-top:6px">本セットの選択タイプ:
+      <span class="pill" id="pChoicePill">-</span>
+      <span class="pill" id="cChoicePill">-</span>
+      <span class="muted" id="rpsNote"></span>
+    </div>
+  </section>
 
-    <section class="cardbox" id="choiceBox" style="display:none;margin-top:12px">
-      <h3>タイプ選択（5秒）</h3>
-      <div class="choice">
-        <label><input type="radio" name="atype" value="phy"> PHY</label>
-        <label><input type="radio" name="atype" value="che"> CHE</label>
-        <label><input type="radio" name="atype" value="bio"> BIO</label>
-        <button id="lockChoice">確定</button>
-        <span class="pill" id="choiceTimer">5.0s</span>
-      </div>
-      <div class="muted" id="choiceResult"></div>
-    </section>
+  <!-- ③ タイプ選択 -->
+  <section id="choiceBox" class="screen box" style="margin-top:12px">
+    <h3>タイプ選択（5秒）</h3>
+    <label><input type="radio" name="atype" value="phy"> PHY</label>
+    <label><input type="radio" name="atype" value="che"> CHE</label>
+    <label><input type="radio" name="atype" value="bio"> BIO</label>
+    <button id="lockChoice">確定</button>
+    <span class="pill" id="choiceTimer">5.0s</span>
+    <div class="muted" id="choiceResult" style="margin-top:6px"></div>
+  </section>
 
-    <section class="row" style="margin-top:12px">
-      <div class="cardbox">
-        <h3>自分</h3>
+  <!-- ④ じゃんけん結果（5秒表示） -->
+  <section id="rpsBox" class="screen box" style="margin-top:12px">
+    <h3>じゃんけん結果</h3>
+    <div id="rpsSummary" class="q"></div>
+    <div class="muted">5秒後にカウントダウンに移ります…</div>
+  </section>
+
+  <!-- ⑤ カウントダウン（5→0） -->
+  <section id="countBox" class="screen box" style="margin-top:12px;display:flex">
+    <div class="big-count" id="countNum">5</div>
+  </section>
+
+  <!-- ⑥ 対戦画面 -->
+  <section id="battleBox" class="screen box" style="margin-top:12px">
+    <div class="row">
+      <div>
+        <h3>あなた</h3>
         <div class="hp">HP: <span id="pHp"></span></div>
         <div class="bar"><i id="pHpBar"></i></div>
-        <div id="pStats" class="muted" style="margin-top:6px"></div>
       </div>
-      <div class="cardbox">
+      <div>
         <h3>CPU</h3>
         <div class="hp">HP: <span id="cHp"></span></div>
         <div class="bar"><i id="cHpBar"></i></div>
-        <div id="cStats" class="muted" style="margin-top:6px"></div>
       </div>
-    </section>
+    </div>
+    <div style="margin-top:8px"><span class="pill" id="roundInfo">ROUND 0</span><span class="pill" id="timerLabel">00.0s</span></div>
+    <div class="q" id="question">（出題待ち）</div>
+    <form id="answerForm">
+      <input id="answerInput" type="text" placeholder="ここに解答を入力" autocomplete="off" />
+      <button>送信</button>
+    </form>
+    <div class="muted" style="margin-top:6px">※ Enterでも送信 / 大文字小文字は無視</div>
+  </section>
 
-    <section class="cardbox qbox">
-      <div><span class="pill" id="roundInfo">ROUND 0</span><span class="pill" id="timerLabel">00.0s</span></div>
-      <div class="q" id="question">（マッチ開始後に出題）</div>
-      <form id="answerForm">
-        <input id="answerInput" type="text" placeholder="ここに解答を入力" autocomplete="off" />
-        <button>送信</button>
-      </form>
-      <div class="muted" style="margin-top:6px">※ Enterでも送信 / 大文字小文字は無視</div>
-    </section>
+  <!-- ログ -->
+  <section id="logBox" class="screen box" style="margin-top:12px">
+    <h3>ログ</h3>
+    <div id="log" class="log"></div>
+  </section>
 
-    <section class="cardbox">
-      <h3>ログ</h3>
-      <div id="log" class="log"></div>
-    </section>
-  </div>
+  <!-- ⑦ 結果画面 -->
+  <section id="resultBox" class="screen box" style="margin-top:12px">
+    <h2>マッチ結果</h2>
+    <div id="resultText" class="q"></div>
+    <button id="toHome">対戦を終了</button>
+    <button id="retry">再戦する</button>
+  </section>
+</div>
 
-  <script type="module" src="src/play.js"></script>
+<script type="module" src="src/play.js"></script>
 </body>
 </html>
