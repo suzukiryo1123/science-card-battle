@@ -41,7 +41,7 @@ let dgs   = [];   // data/dungeons.json の dungeons（{id,name,questions:[{q,a}
 // ================= 対戦状態 =================
 let player = null, cpu = null;
 let myDungeonIds = [], cpuDungeonIds = [];
-let pPool = [], cPool = [];   // ★ 独立した出題プール
+let pPool = [], cPool = [];   // ★ プレイヤー/CPUで独立した出題プール
 let match = { p:0, c:0, set:0 };
 
 let pChoice='phy', cChoice='phy';
@@ -51,6 +51,7 @@ let setOver = false;
 
 // プレイヤー用の現在問題とタイマー
 let pQ = null, pDeadline = 0, pRafId = null, pEndTimerId = null;
+
 // CPU用の現在問題とタイマー
 let cQ = null, cDeadline = 0, cAnswerTimerId = null, cEndTimerId = null;
 
@@ -181,13 +182,15 @@ function nextSet(){
   match.set++; el('setCounter').textContent=String(match.set);
   // HPリセット
   player.hp = player.hpMax; cpu.hp = cpu.hpMax; setBars();
-  // 出題プールは双方独立（同じ合体元から別シャッフル）
+
+  // 出題プールは双方独立（同一合体元から別シャッフル）
   const idsMerged = [...new Set([...myDungeonIds, ...cpuDungeonIds])];
   pPool = makePoolFrom(idsMerged);
   cPool = makePoolFrom(idsMerged);
 
   setOver = false;
-  // タイプ選択開始
+
+  // タイプ選択へ
   startChoicePhase();
 }
 
@@ -256,49 +259,48 @@ function startCountdown(){
   },1000);
 }
 
-// ================= バトル開始（独立進行） =================
+// ================= バトル開始（完全独立進行） =================
 function startBattle(){
   only('battleBox','logBox');
-  // プレイヤーとCPUで別々に開始
-  startPlayerQuestion();
-  startCpuQuestion();
+  startPlayerQuestion(); // プレイヤー用UIの問題進行
+  startCpuQuestion();    // CPUは裏で独立進行（UI更新なし）
 }
 
+// ---- プレイヤー側ループ ----
 function startPlayerQuestion(){
   if(setOver) return;
   if(player.hp<=0 || cpu.hp<=0) return endSet();
 
-  if(pPool.length===0){ // 打ち切り（ほぼ起きない想定）
-    log('（あなた側）問題が尽きました');
-    return endSet(); // 現在HPで決める
+  if(pPool.length===0){
+    log('（あなた側）問題が尽きました'); 
+    return endSet();
   }
 
   const q = pPool.shift();
   pQ = {...q};
-  el('roundInfo').textContent = `ROUND (あなた)`;
+  el('roundInfo').textContent = 'ROUND (あなた)';
   el('question').textContent  = q.q;
   el('answerInput').value=''; el('answerInput').disabled=false; el('answerInput').focus();
 
   const start = performance.now();
-  pDeadline = start + LIMIT_MS;
+  pDeadline   = start + LIMIT_MS;
 
   const rafTick = ()=>{
     if(setOver) return;
-    const remain=Math.max(0,pDeadline - performance.now());
+    const remain=Math.max(0, pDeadline - performance.now());
     el('timerLabel').textContent=(remain/1000).toFixed(1)+'s';
     if(remain<=0){
-      applyPenalty('p', 0);
-      // すぐ次のあなたの問題へ
-      setTimeout(startPlayerQuestion, 200);
+      applyPenalty('p', 0); // 残り0sでペナルティ
+      setTimeout(startPlayerQuestion, 150); // あなた側だけ次へ
     }else{
       pRafId = requestAnimationFrame(rafTick);
     }
   };
   pRafId = requestAnimationFrame(rafTick);
-
-  pEndTimerId = setTimeout(()=>{/*safety*/}, LIMIT_MS+50);
+  pEndTimerId = setTimeout(()=>{/* safety */}, LIMIT_MS+50);
 }
 
+// ---- CPU側ループ（UIには触れない）----
 function startCpuQuestion(){
   if(setOver) return;
   if(player.hp<=0 || cpu.hp<=0) return endSet();
@@ -310,7 +312,6 @@ function startCpuQuestion(){
 
   const q = cPool.shift();
   cQ = {...q};
-  // CPUの回答方針
   const cpuCorrect = Math.random() < CPU_ACCURACY;
   const cpuTime    = CPU_MIN_MS + Math.random()*(CPU_MAX_MS - CPU_MIN_MS);
   const start      = performance.now();
@@ -320,14 +321,14 @@ function startCpuQuestion(){
     if(setOver) return;
     const remain = Math.max(0, cDeadline - performance.now());
     if(cpuCorrect){
-      applyDamage('c', remain); // CPUの与ダメ
+      applyDamage('c', remain);   // CPUの与ダメ
     }else{
-      applyPenalty('c', remain); // CPUの自傷
+      applyPenalty('c', remain);  // CPUの自傷
     }
-    // すぐ次のCPU問題へ
-    setTimeout(startCpuQuestion, 120);
+    setTimeout(startCpuQuestion, 100); // CPUだけ次へ
   }, Math.min(cpuTime, LIMIT_MS));
-  cEndTimerId = setTimeout(()=>{/*safety*/}, LIMIT_MS+50);
+
+  cEndTimerId = setTimeout(()=>{/* safety */}, LIMIT_MS+50);
 }
 
 // ================= ダメージ＆ペナルティ =================
@@ -342,7 +343,6 @@ function applyDamage(side, remainMs){
 
   if(side==='p'){ cpu.hp -= dmg; } else { player.hp -= dmg; }
   setBars();
-
   log(`${side==='p'?'あなた':'CPU'} 正解 → ${atkType.toUpperCase()}基礎${base} × RPS${rpsMul.toFixed(1)} × 時間${mult.toFixed(2)} = ${dmg} dmg`);
 
   if(player.hp<=0 || cpu.hp<=0) endSet();
@@ -359,7 +359,6 @@ function applyPenalty(side, remainMs){
 
   if(side==='p'){ player.hp -= dmg; } else { cpu.hp -= dmg; }
   setBars();
-
   log(`${side==='p'?'あなた':'CPU'} 不正解 → ペナルティ ${atkType.toUpperCase()}基礎${base} × RPS${rpsMul.toFixed(1)} × 時間${mult.toFixed(2)} × 係数${PENALTY_RATE} = ${dmg} self-dmg`);
 
   if(player.hp<=0 || cpu.hp<=0) endSet();
@@ -371,34 +370,31 @@ function onSubmit(e){
   if(setOver) return;
   if(!pQ) return;
 
-  const ans = el('answerInput').value;
-  const ok  = normalize(ans) === normalize(pQ.a);
+  const ans    = el('answerInput').value;
+  const ok     = normalize(ans) === normalize(pQ.a);
   const remain = Math.max(0, pDeadline - performance.now());
 
-  // タイマー停止
   cancelAnimationFrame(pRafId); clearTimeout(pEndTimerId);
 
   if(ok){ applyDamage('p', remain); }
   else { applyPenalty('p', remain); }
 
-  // 即あなたの次の問題へ（CPUは独立に進行中）
-  setTimeout(startPlayerQuestion, 200);
+  setTimeout(startPlayerQuestion, 150); // あなた側だけ次へ
 }
 
-// ================= セット終了 → 待機（両者の準備OKで次セット） =================
+// ================= セット終了 → 待機（両者準備OKで次セット） =================
 function endSet(){
   if(setOver) return;
   setOver = true;
 
-  // 全タイマー停止
+  // タイマー停止
   cancelAnimationFrame(pRafId); clearTimeout(pEndTimerId);
   clearTimeout(cAnswerTimerId); clearTimeout(cEndTimerId);
 
   // 勝敗集計
   let winner = null;
   if(player.hp<=0 && cpu.hp<=0){
-    // 両者同時0の場合→HP比較で決める、同点ならCPU勝ちにする等のルールもあり
-    winner = (player.hp === cpu.hp) ? 'c' : (player.hp > cpu.hp ? 'p' : 'c');
+    winner = (player.hp === cpu.hp) ? 'c' : (player.hp > player.hp ? 'p' : 'c');
   }else{
     winner = (cpu.hp<=0) ? 'p' : 'c';
   }
@@ -406,7 +402,7 @@ function endSet(){
   el('scoreP').textContent=String(match.p);
   el('scoreC').textContent=String(match.c);
 
-  // マッチ終了判定
+  // マッチ終了か？
   if(match.p===2 || match.c===2 || match.set===3){
     const msg = match.p===match.c ? '引き分け' : (match.p>match.c?'マッチ勝利！':'マッチ敗北…');
     el('resultText').textContent = `結果: あなた ${match.p} - ${match.c} CPU → ${msg}`;
@@ -414,13 +410,13 @@ function endSet(){
     return;
   }
 
-  // セット間待機（両者の準備OK）
+  // ★ セット間待機（両者準備OK）
   pReadyNext=false; cReadyNext=false;
   el('betweenText').textContent = `セット${match.set} 終了：${winner==='p'?'あなたの勝ち':'CPUの勝ち'}（現在スコア あなた ${match.p} - ${match.c} CPU）`;
-  el('readyStatus').textContent = 'あなたの準備を待機中…';
+  el('readyStatus').textContent = 'あなた：未準備 ／ CPU：未準備';
   only('betweenBox','logBox');
 
-  // CPU側の「準備OK」は数秒後に自動
+  // CPUは少し遅れて自動で準備OK
   setTimeout(()=>{ cReadyNext = true; updateReadyStatus(); tryStartNextSetWhenBothReady(); }, 1200 + Math.random()*800);
 }
 
@@ -432,16 +428,14 @@ function onPlayerReadyNext(){
 
 function updateReadyStatus(){
   const me = pReadyNext ? 'あなた：準備OK' : 'あなた：未準備';
-  const op = cReadyNext ? 'CPU：準備OK' : 'CPU：準備待ち…';
+  const op = cReadyNext ? 'CPU：準備OK' : 'CPU：未準備';
   el('readyStatus').textContent = `${me} ／ ${op}`;
 }
 
 function tryStartNextSetWhenBothReady(){
   if(!(pReadyNext && cReadyNext)) return;
-  // 次セットへ
   nextSet();
-  // タイプ選択画面へ
-  only('choiceBox','logBox');
+  only('choiceBox','logBox'); // 次セットのタイプ選択へ
 }
 
 // ================= 起動時バインド（最後） =================
