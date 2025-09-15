@@ -1,322 +1,369 @@
-// --- 設定 ---
-const ROUND_TIME = 20.0;     // 1問の制限時間(秒)
-const CPU_CORRECT_P = 0.7;   // CPUが正解する確率
-const CPU_TIME_MEAN = 12;    // CPUの解答平均秒
-const CPU_TIME_JITTER = 6;   // ばらつき（±）
+// ===== 基本ユーティリティ =====
+const el = (id) => document.getElementById(id);
+const log = (s) => { const box = el('log'); box.textContent += s + '\n'; box.scrollTop = box.scrollHeight; };
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const fmtHp = (x) => Math.max(0, Math.round(x));
+const normalize = (s) => String(s ?? '').trim().toLowerCase();
 
-// --- 状態 ---
-let cards = [];
-let dungeons = [];
-let selectedCard = null;
-let selectedDungeonIds = [];
+// RPS: PHY > CHE > BIO > PHY
+const beats = { phy: 'che', che: 'bio', bio: 'phy' };
+const rpsOutcome = (a, b) => a === b ? 0 : (beats[a] === b ? 1 : -1);
 
-let myHP = 0, cpuHP = 0, myMaxHP = 0, cpuMaxHP = 0;
-let quizPool = [];   // 出題リスト（自分2つ + CPU2つの合体）
-let cur = -1;
+// 残り時間倍率: 20s→2.0, 10s→1.0, 10s未満は1.0
+const LIMIT = 20000; // ms
+const timeMult = (remainMs) => {
+  const remain = remainMs / 1000;
+  return clamp(1 + (remain - 10) / 10, 1, 2);
+};
 
-let timerId = null;
-let remain = ROUND_TIME;
-let answered = false;
+// ===== データ =====
+let cards = [];         // data/cards.json
+let dgs = [];           // data/dungeons.json の dungeons 配列
+let myDungeonIds = [];  // 2つ保持
+let cpuDungeonIds = []; // 2つ保持
 
-// 戦績用
-let myCorrect = 0, cpuCorrect = 0, myTimeSum = 0, roundsAnswered = 0;
+// ===== マッチ・セット状態 =====
+let player = null;    // {hpMax, hp, name, phy, che, bio, type,...}
+let cpu = null;
+let match = { p: 0, c: 0, set: 0 }; // セットカウント
+let pChoice = 'phy', cChoice = 'phy'; // 今セットのタイプ選択
+let pRpsMul = 1.0, cRpsMul = 1.0;     // 今セットのじゃんけん倍率
+let pool = [];        // 今セットの出題プール
+let round = 0;
 
-// DOMヘルパ
-const $ = (sel) => document.querySelector(sel);
-const log = (t) => { const d = document.createElement('div'); d.textContent = t; $('#log').prepend(d); };
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+// 現在の問題サイクル
+let currentQ = null;
+let qDeadline = 0;
+let rafId = null;
+let endTimerId = null;
+let cpuTimerId = null;
+let chooseTimerId = null;
+let chooseDeadline = 0;
 
-// 20s→2.0倍、10s→1.0倍、0s→0倍（直線）
-const timeMultiplier = (rem) => clamp(rem / 10.0, 0, 2);
+// ===== 画面補助 =====
+const setBars = () => {
+  el('pHp').textContent = fmtHp(player.hp);
+  el('cHp').textContent = fmtHp(cpu.hp);
+  el('pHpBar').style.width = clamp(player.hp / player.hpMax * 100, 0, 100) + '%';
+  el('cHpBar').style.width = clamp(cpu.hp / cpu.hpMax * 100, 0, 100) + '%';
+};
+const statLine = (c) => `TYPE:${c.type.toUpperCase()} | PHY:${c.phy} CHE:${c.che} BIO:${c.bio}`;
+const getAtkByType = (c, t) => t === 'phy' ? c.phy : t === 'che' ? c.che : c.bio;
 
-// 文字の表記ゆれ吸収
-function norm(s) {
-  return (s ?? '').toString()
-    .normalize('NFKC')
-    .trim()
-    .toLowerCase()
-    .replace(/[₀₁₂₃₄₅₆₇₈₉]/g, (c) => '0123456789'['₀₁₂₃₄₅₆₇₈₉'.indexOf(c)])
-    .replace(/\s+/g, '');
-}
-
-// 正誤判定（answers/answerText/regex/choices+answer に対応）
-function isCorrect(prob, input) {
-  const n = norm(input);
-  if (prob.regex) { try { return new RegExp(prob.regex, 'i').test(input); } catch(e) {} }
-  if (Array.isArray(prob.answers)) return prob.answers.some(a => norm(a) === n);
-  if (typeof prob.answerText === 'string') return norm(prob.answerText) === n;
-  if (typeof prob.answer === 'string') return norm(prob.answer) === n;
-  if (typeof prob.answer === 'number' && Array.isArray(prob.choices)) {
-    const text = prob.choices[prob.answer];
-    return norm(text) === n;
-  }
-  return false;
-}
-
-// カードタイプの攻撃力
-function attackOf(card){
-  const t = card.type.toUpperCase();
-  if (t === 'PHY') return card.phy;
-  if (t === 'CHE') return card.che;
-  return card.bio;
-}
-
-// ---- ローカル保存（プロフィール＆戦績） ----
-const PROFILE_KEY = 'scb_profile';
-const RESULT_KEY  = 'scb_results';
-
-function loadProfile(){
-  try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}'); } catch { return {}; }
-}
-function saveProfile(p){
-  localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
-}
-function loadResults(){
-  try { return JSON.parse(localStorage.getItem(RESULT_KEY) || '[]'); } catch { return []; }
-}
-function saveResults(arr){
-  localStorage.setItem(RESULT_KEY, JSON.stringify(arr));
-}
-function exportCSV(){
-  const rows = loadResults();
-  const head = ['timestamp','student_id','nickname','card','type','my_hp_end','my_hp_max','cpu_hp_end','cpu_hp_max','dungeons','rounds','my_correct','cpu_correct','my_avg_time'];
-  const lines = [head.join(',')];
-  for (const r of rows) {
-    const vals = [
-      r.ts, r.sid, csvSafe(r.nick), r.card, r.type,
-      r.myHpEnd, r.myHpMax, r.cpuHpEnd, r.cpuHpMax,
-      `"${r.dungeons}"`, r.rounds, r.myCorrect, r.cpuCorrect, r.myAvgTime
-    ];
-    lines.push(vals.join(','));
-  }
-  const bom = '\uFEFF'; // Excel向けUTF-8 BOM
-  const blob = new Blob([bom + lines.join('\n')], {type: 'text/csv;charset=utf-8;'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'scb_results.csv';
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-}
-function csvSafe(s){ return (s ?? '').toString().replace(/"/g,'""'); }
-
-// ---- 初期化 ----
+// ===== ロード =====
 async function loadAll() {
-  const [cardsRes, dungRes] = await Promise.all([
-    fetch('data/cards.json', {cache:'no-store'}),
-    fetch('data/dungeons.json', {cache:'no-store'})
-  ]);
-  cards = await cardsRes.json();
-  dungeons = await dungRes.json();
+  const cj = await fetch('data/cards.json').then(r => r.json());
+  const dj = await fetch('data/dungeons.json').then(r => r.json());
+  cards = cj;
+  dgs = dj.dungeons;
 
-  // SRカードのみ（今はSR運用のため）
-  const sr = cards.filter(c => c.rarity === 'SR');
+  // セレクト
+  const pSel = el('playerCard');
+  const cSel = el('cpuCard');
+  cards.forEach((c, i) => {
+    const a = document.createElement('option');
+    a.value = i; a.textContent = `${c.name} (${c.type})`; pSel.appendChild(a);
+    const b = document.createElement('option');
+    b.value = i; b.textContent = `${c.name} (${c.type})`; cSel.appendChild(b);
+  });
+  pSel.value = 0;
+  cSel.value = 2;
 
+  // ダンジョンチェック
+  const mkChecks = (rootId) => {
+    const root = el(rootId); root.innerHTML = '';
+    dgs.forEach(d => {
+      const id = `${rootId}_${d.id}`;
+      root.insertAdjacentHTML('beforeend',
+        `<label style="display:inline-block;margin-right:8px">
+           <input type="checkbox" id="${id}" value="${d.id}"> ${d.name}
+         </label>`);
+    });
+  };
+  mkChecks('myDungeons');
+  mkChecks('cpuDungeons');
+}
+
+// ===== ダンジョンプール =====
+function pickSelected(rootId) {
+  const ids = [];
+  dgs.forEach(d => {
+    const cb = document.getElementById(`${rootId}_${d.id}`);
+    if (cb && cb.checked) ids.push(d.id);
+  });
+  return ids.slice(0, 2);
+}
+
+function buildPool(idsA, idsB) {
+  const set = new Set([...idsA, ...idsB]);
+  pool = [];
+  dgs.filter(d => set.has(d.id)).forEach(d => {
+    // 問題の type はダメージ計算に使わない（無視）
+    pool.push(...d.questions.map(q => ({ q: q.q, a: q.a, dungeon: d.id })));
+  });
+  // シャッフル
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+}
+
+// ===== マッチ・セット進行 =====
+function beginMatch() {
+  match = { p: 0, c: 0, set: 0 };
+  el('scoreP').textContent = '0';
+  el('scoreC').textContent = '0';
+  beginSet();
+}
+
+function beginSet() {
+  match.set++;
+  el('setCounter').textContent = String(match.set);
+
+  // HP リセット
+  player.hp = player.hpMax;
+  cpu.hp = cpu.hpMax;
+  setBars();
+
+  // 出題プール再構成
+  buildPool(myDungeonIds, cpuDungeonIds);
+  round = 0;
+
+  // タイプ選択フェーズ
+  startChoicePhase();
+}
+
+function finishSet(winner) {
+  if (winner === 'p') match.p++; else if (winner === 'c') match.c++;
+  el('scoreP').textContent = String(match.p);
+  el('scoreC').textContent = String(match.c);
+
+  log(`\n=== セット結果: ${winner === 'p' ? 'あなたの勝ち' : 'CPUの勝ち'}（${match.p}-${match.c}） ===\n`);
+
+  if (match.p === 2 || match.c === 2 || match.set === 3) {
+    const msg = match.p === match.c ? '引き分け！' : (match.p > match.c ? 'マッチ勝利！' : 'マッチ敗北…');
+    log(`*** マッチ終了: ${msg} ***`);
+    el('question').textContent = 'マッチ終了（もう一度やるには「マッチ開始」）';
+    el('answerInput').disabled = true;
+  } else {
+    // 次セット
+    setTimeout(beginSet, 1000);
+  }
+}
+
+// ===== タイプ選択（5秒） =====
+function bestType(c) {
+  const arr = [['phy', c.phy], ['che', c.che], ['bio', c.bio]];
+  arr.sort((a, b) => b[1] - a[1]);
+  return arr[0][0];
+}
+
+function startChoicePhase() {
+  // 初期表示
+  el('choiceBox').style.display = '';
+  el('choiceResult').textContent = '';
+  el('pChoicePill').textContent = '-';
+  el('cChoicePill').textContent = '-';
+  el('rpsNote').textContent = '';
+  pChoice = null; cChoice = null; pRpsMul = 1.0; cRpsMul = 1.0;
+
+  // CPU 先に決めておく（ランダムでもOK）
+  const choices = ['phy','che','bio'];
+  cChoice = choices[Math.floor(Math.random()*3)];
+
+  // 5秒カウント
+  chooseDeadline = performance.now() + 5000;
+  const tick = () => {
+    const remain = Math.max(0, chooseDeadline - performance.now());
+    el('choiceTimer').textContent = (remain/1000).toFixed(1) + 's';
+    if (remain <= 0) return finalizeChoices(true);
+    chooseTimerId = requestAnimationFrame(tick);
+  };
+  chooseTimerId = requestAnimationFrame(tick);
+
+  // 確定ボタン
+  el('lockChoice').onclick = () => finalizeChoices(false);
+}
+
+function finalizeChoices(autoPick) {
+  cancelAnimationFrame(chooseTimerId);
+
+  // プレイヤー選択
+  if (!pChoice) {
+    const sel = document.querySelector('input[name="atype"]:checked');
+    pChoice = sel ? sel.value : (autoPick ? bestType(player) : bestType(player));
+  }
+
+  // じゃんけん倍率設定
+  const out = rpsOutcome(pChoice, cChoice);
+  if (out === 1) { pRpsMul = 1.5; cRpsMul = 0.5; }
+  else if (out === -1) { pRpsMul = 0.5; cRpsMul = 1.5; }
+  else { pRpsMul = 1.0; cRpsMul = 1.0; }
+
+  el('pChoicePill').textContent = `あなた:${pChoice.toUpperCase()}`;
+  el('cChoicePill').textContent = `CPU:${cChoice.toUpperCase()}`;
+  el('rpsNote').textContent =
+    `（倍率 あなた×${pRpsMul.toFixed(1)} / CPU×${cRpsMul.toFixed(1)}）`;
+  el('choiceResult').textContent = 'タイプ確定。出題を開始します。';
+  el('choiceBox').style.display = 'none';
+
+  log(`セット${match.set}: タイプ選択 あなた=${pChoice.toUpperCase()} / CPU=${cChoice.toUpperCase()} → 倍率 あなた×${pRpsMul} / CPU×${cRpsMul}`);
+
+  // 出題開始
+  nextQuestion();
+}
+
+// ===== 出題・判定 =====
+function nextQuestion() {
+  if (player.hp <= 0 || cpu.hp <= 0) {
+    return finishSet(player.hp <= 0 && cpu.hp <= 0 ? (match.p > match.c ? 'p' : 'c') : (cpu.hp <= 0 ? 'p' : 'c'));
+  }
+  if (pool.length === 0) {
+    log('問題が尽きました（引き分け扱いで次セット）');
+    return finishSet(match.p === match.c ? 'c' : (match.p > match.c ? 'p' : 'c')); // 形だけ決着
+  }
+
+  round++;
+  const q = pool.shift();
+  currentQ = { ...q, pDone:false, cDone:false, ended:false };
+  el('roundInfo').textContent = `ROUND ${round}`;
+  el('question').textContent = q.q;
+  el('answerInput').value = '';
+  el('answerInput').disabled = false;
+  el('answerInput').focus();
+
+  // タイマー
+  const start = performance.now();
+  qDeadline = start + LIMIT;
+  const rafTick = () => {
+    const remain = Math.max(0, qDeadline - performance.now());
+    el('timerLabel').textContent = (remain/1000).toFixed(1) + 's';
+    if (remain <= 0) {
+      finishQuestion(); // 時間切れ
+    } else {
+      rafId = requestAnimationFrame(rafTick);
+    }
+  };
+  rafId = requestAnimationFrame(rafTick);
+
+  // CPUの擬似解答（正答率85%、6〜18秒で回答）
+  const cpuCorrect = Math.random() < 0.85;
+  const cpuTime = 6000 + Math.random() * 12000;
+  if (cpuCorrect && cpuTime < LIMIT) {
+    cpuTimerId = setTimeout(() => {
+      if (currentQ && !currentQ.cDone && !currentQ.ended) {
+        currentQ.cDone = true;
+        const remain = Math.max(0, qDeadline - performance.now());
+        applyDamage('c', remain); // c の与ダメは「CPUが正解した時点」で適用
+      }
+    }, cpuTime);
+  }
+  // 時間切れまでの保険
+  endTimerId = setTimeout(finishQuestion, LIMIT + 20);
+}
+
+function applyDamage(side, remainMs) {
+  // side === 'p' → プレイヤーが与ダメ, 'c' → CPUが与ダメ
+  const atkType = side === 'p' ? pChoice : cChoice;
+  const unit = side === 'p' ? player : cpu;
+  const rpsMul = side === 'p' ? pRpsMul : cRpsMul;
+  const base = getAtkByType(unit, atkType);
+  const dmg = Math.round(base * rpsMul * timeMult(remainMs));
+
+  if (side === 'p') {
+    cpu.hp -= dmg;
+  } else {
+    player.hp -= dmg;
+  }
+  setBars();
+
+  log(
+    `${side === 'p' ? 'あなた' : 'CPU'} 正解 → ` +
+    `${atkType.toUpperCase()}基礎${base} × RPS${rpsMul.toFixed(1)} × 時間${timeMult(remainMs).toFixed(2)} = ${dmg} dmg`
+  );
+
+  if (player.hp <= 0 || cpu.hp <= 0) {
+    currentQ.ended = true;
+    clearTimeout(endTimerId);
+    cancelAnimationFrame(rafId);
+    if (cpuTimerId) clearTimeout(cpuTimerId);
+    setTimeout(() => finishSet(cpu.hp <= 0 ? 'p' : 'c'), 200);
+  }
+}
+
+function finishQuestion() {
+  if (!currentQ || currentQ.ended) return;
+  currentQ.ended = true;
+
+  // クリア
+  clearTimeout(endTimerId);
+  cancelAnimationFrame(rafId);
+  if (cpuTimerId) clearTimeout(cpuTimerId);
+
+  // 次へ
+  setTimeout(nextQuestion, 400);
+}
+
+// ===== 入力イベント =====
+function onSubmit(e) {
+  e.preventDefault();
+  if (!currentQ || currentQ.pDone || currentQ.ended) return;
+
+  const ans = el('answerInput').value;
+  const correct = normalize(ans) === normalize(currentQ.a);
+  const remain = Math.max(0, qDeadline - performance.now());
+
+  if (correct) {
+    currentQ.pDone = true;
+    applyDamage('p', remain); // プレイヤーは解いた瞬間に与ダメ
+  } else {
+    log('あなた 不正解');
+  }
+
+  // 両方解き終わっていたら早めに次へ
+  if (currentQ && currentQ.pDone && currentQ.cDone && !currentQ.ended) {
+    finishQuestion();
+  }
+}
+
+// ===== スタートボタン =====
+function startClicked() {
   // カード選択
-  const sel = $('#cardSelect');
-  sr.forEach(c => {
-    const o = document.createElement('option');
-    o.value = c.name;
-    o.textContent = `${c.name}（${c.type} / HP${c.hp}）`;
-    sel.appendChild(o);
-  });
-
-  // ダンジョン選択（チェック2つ）
-  const box = $('#dungeonList');
-  dungeons.forEach(d => {
-    const id = `d_${d.id}`;
-    const label = document.createElement('label');
-    label.style.marginRight = '1rem';
-    label.innerHTML = `<input type="checkbox" id="${id}" value="${d.id}"> ${d.name}`;
-    box.appendChild(label);
-  });
-
-  // プロフィールロード
-  const prof = loadProfile();
-  if (prof.sid) $('#studentId').value = prof.sid;
-  if (prof.nick) $('#nickname').value = prof.nick;
-
-  // イベント
-  $('#saveProfile').onclick = onSaveProfile;
-  $('#exportCsv').onclick = exportCSV;
-  $('#startBtn').addEventListener('click', startGame);
-  $('#submitBtn').onclick = () => answerFromInput();
-  $('#answerInput').onkeydown = (e) => { if (e.key === 'Enter') answerFromInput(); };
-}
-
-function onSaveProfile(){
-  const sid = $('#studentId').value.trim();
-  const nick = $('#nickname').value.trim();
-  const msg = $('#profileMsg');
-
-  if (!/^\d{8}$/.test(sid)) { msg.textContent = '生徒IDは8桁の数字で入力してください。'; return; }
-  if (!nick) { msg.textContent = 'ニックネームを入力してください。'; return; }
-  saveProfile({ sid, nick });
-  msg.textContent = '保存しました。';
-  setTimeout(()=> msg.textContent='', 1500);
-}
-
-async function startGame() {
-  // プロフィール必須
-  const { sid, nick } = loadProfile();
-  if (!sid || !nick) { alert('先に生徒IDとニックネームを保存してください。'); return; }
-
-  // カード決定
-  const name = $('#cardSelect').value;
-  selectedCard = cards.find(c => c.name === name);
-  myHP = myMaxHP = selectedCard.hp;
-
-  // CPUはランダムで別カード（なければ同じでもOK）
-  const cpuCard = (cards.filter(c => c.rarity === 'SR' && c.name !== name)[0] || selectedCard);
-  cpuHP = cpuMaxHP = cpuCard.hp;
+  const pIdx = Number(el('playerCard').value);
+  const cIdx = Number(el('cpuCard').value);
+  player = { ...cards[pIdx] }; cpu = { ...cards[cIdx] };
+  player.hpMax = player.hp; cpu.hpMax = cpu.hp;
+  el('pStats').textContent = statLine(player);
+  el('cStats').textContent = statLine(cpu);
+  setBars();
 
   // ダンジョン選択
-  const checked = [...document.querySelectorAll('#dungeonList input[type="checkbox"]:checked')].map(i => i.value);
-  if (checked.length !== 2) { alert('ダンジョンは2つ選んでください'); return; }
-  selectedDungeonIds = checked;
-  const opponentDungeonIds = checked; // 今は同じ
-
-  // 出題プールを合体してシャッフル
-  function pickProblems(ids){
-    return ids.flatMap(id => (dungeons.find(d => d.id === id)?.problems || []));
-  }
-  quizPool = [...pickProblems(selectedDungeonIds), ...pickProblems(opponentDungeonIds)]
-              .sort(() => Math.random() - 0.5);
-
-  // 戦績カウンタ初期化
-  myCorrect = 0; cpuCorrect = 0; myTimeSum = 0; roundsAnswered = 0;
-
-  // UI切替
-  $('#setup').style.display = 'none';
-  $('#battle').style.display = '';
-  updateHpBars();
-  nextRound();
-}
-
-function updateHpBars(){
-  $('#myHpText').textContent = Math.max(0, Math.ceil(myHP));
-  $('#cpuHpText').textContent = Math.max(0, Math.ceil(cpuHP));
-  $('#myHpBar').style.width = `${clamp(myHP / myMaxHP, 0, 1) * 100}%`;
-  $('#cpuHpBar').style.width = `${clamp(cpuHP / cpuMaxHP, 0, 1) * 100}%`;
-}
-
-function nextRound(){
-  cur++;
-  if (myHP <= 0 || cpuHP <= 0){ endGame(); return; }
-  if (cur >= quizPool.length){ endGame(true); return; }
-
-  $('#roundNo').textContent = cur + 1;
-  $('#msg').textContent = '';
-
-  const prob = quizPool[cur];
-  $('#question').textContent = prob.q;
-
-  // 入力欄をリセット＆フォーカス
-  const $in = $('#answerInput');
-  $in.value = '';
-  setTimeout(() => $in.focus(), 50);
-
-  // タイマースタート
-  answered = false;
-  remain = ROUND_TIME;
-  if (timerId) clearInterval(timerId);
-  timerId = setInterval(tick, 100);
-  tick();
-}
-
-function tick(){
-  remain = Math.max(0, remain - 0.1);
-  $('#timeLeft').textContent = `${remain.toFixed(1)}s`;
-  $('#timerBar').style.width = `${(remain / ROUND_TIME) * 100}%`;
-
-  if (remain <= 0){
-    clearInterval(timerId);
-    if (!answered) answerFromInput(true); // 時間切れ
-  }
-}
-
-function answerFromInput(timeup=false){
-  if (answered) return;
-  answered = true;
-  clearInterval(timerId);
-
-  const input = $('#answerInput').value;
-  const prob = quizPool[cur];
-
-  const correct = !timeup && isCorrect(prob, input);
-
-  // プレイヤー側
-  const myAtk = attackOf(selectedCard);
-  const myMult = timeMultiplier(remain);
-  const myDmg = correct ? Math.round(myAtk * myMult) : 0;
-
-  // CPU（確率で正解、ランダム速度）
-  const cpuTimeUsed = clamp(CPU_TIME_MEAN + (Math.random()*2-1)*CPU_TIME_JITTER, 1, 19);
-  const cpuRemain = ROUND_TIME - cpuTimeUsed;
-  const cpuCorrectFlag = Math.random() < CPU_CORRECT_P;
-  const cpuAtk = myAtk; // 簡易
-  const cpuMult = timeMultiplier(cpuRemain);
-  const cpuDmg = cpuCorrectFlag ? Math.round(cpuAtk * cpuMult) : 0;
-
-  // ダメージ適用
-  cpuHP -= myDmg;
-  myHP  -= cpuDmg;
-  updateHpBars();
-
-  // 戦績カウント
-  roundsAnswered++;
-  if (correct) myCorrect++;
-  if (cpuCorrectFlag) cpuCorrect++;
-  const myTimeUsed = ROUND_TIME - remain;
-  myTimeSum += myTimeUsed;
-
-  // 表示
-  $('#msg').textContent = correct ? `正解！ 与ダメージ ${myDmg}` :
-                                   (timeup ? '時間切れ… 与ダメージ 0' : '不正解… 与ダメージ 0');
-  log(`あなた: 残り${remain.toFixed(1)}s × 倍率${myMult.toFixed(2)} → ${myDmg}ダメージ`);
-  log(`CPU   : 残り${cpuRemain.toFixed(1)}s × 倍率${cpuMult.toFixed(2)} → ${cpuDmg}ダメージ`);
-
-  setTimeout(() => {
-    if (myHP <= 0 || cpuHP <= 0){ endGame(); }
-    else { nextRound(); }
-  }, 700);
-}
-
-function endGame(noMoreQuestions=false){
-  let resultLabel = '';
-  if (myHP <= 0 && cpuHP <= 0){ resultLabel = 'draw'; $('#msg').textContent = '引き分け！'; }
-  else if (myHP <= 0){ resultLabel = 'lose'; $('#msg').textContent = 'あなたの負け…'; }
-  else if (cpuHP <= 0){ resultLabel = 'win'; $('#msg').textContent = 'あなたの勝ち！'; }
-  else if (noMoreQuestions){
-    if (myHP > cpuHP){ resultLabel = 'win'; $('#msg').textContent = '時間切れ：あなたの勝ち！'; }
-    else if (myHP < cpuHP){ resultLabel = 'lose'; $('#msg').textContent = '時間切れ：あなたの負け…'; }
-    else { resultLabel = 'draw'; $('#msg').textContent = '時間切れ：引き分け'; }
+  myDungeonIds = pickSelected('myDungeons');
+  cpuDungeonIds = pickSelected('cpuDungeons');
+  if (myDungeonIds.length !== 2 || cpuDungeonIds.length !== 2) {
+    alert('ダンジョンは各自2つずつ選んでください');
+    return;
   }
 
-  // 戦績保存
-  const prof = loadProfile();
-  const rec = {
-    ts: new Date().toISOString(),
-    sid: prof.sid || '',
-    nick: prof.nick || '',
-    card: selectedCard?.name || '',
-    type: selectedCard?.type || '',
-    myHpEnd: Math.max(0, Math.ceil(myHP)),
-    myHpMax: myMaxHP,
-    cpuHpEnd: Math.max(0, Math.ceil(cpuHP)),
-    cpuHpMax: cpuMaxHP,
-    dungeons: selectedDungeonIds.join('|'),
-    rounds: quizPool.length,
-    myCorrect, cpuCorrect,
-    myAvgTime: roundsAnswered>0 ? (myTimeSum/roundsAnswered).toFixed(2) : '0.00',
-    result: resultLabel
-  };
-  const all = loadResults();
-  all.push(rec);
-  saveResults(all);
-  log(`戦績を保存しました（${resultLabel}）。CSVは上のボタンから出力できます。`);
+  // ログとUI初期化
+  el('log').textContent = '';
+  el('question').textContent = 'タイプ選択待ち…';
+  el('answerInput').disabled = true;
+
+  beginMatch();
 }
 
-loadAll().catch(e => {
-  console.error(e);
-  alert('データ読み込みに失敗しました。ファイルパスを確認してください。');
+// ===== 起動 =====
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadAll();
+  el('startBtn').addEventListener('click', startClicked);
+  el('answerForm').addEventListener('submit', onSubmit);
+
+  // ラジオ選択の更新を反映（確定前でも pill に出す）
+  document.querySelectorAll('input[name="atype"]').forEach(r =>
+    r.addEventListener('change', () => {
+      const v = document.querySelector('input[name="atype"]:checked')?.value;
+      el('pChoicePill').textContent = v ? `あなた:${v.toUpperCase()}` : '-';
+    })
+  );
 });
