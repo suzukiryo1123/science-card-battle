@@ -1,22 +1,31 @@
-[
-  {
-    "id": "phy_basic",
-    "name": "物理 基礎",
-    "type": "PHY",
-    "problems": [
-      { "id": "p1", "q": "音はどんな波？", "answers": ["縦波", "たてなみ"] },
-      { "id": "p2", "q": "速度の単位は？", "answers": ["m/s", "m s^-1", "ms^-1"] },
-      { "id": "p3", "q": "電荷の記号は？", "answers": ["Q", "q"] }
-    ]
-  },
-  {
-    "id": "che_basic",
-    "name": "化学 基礎",
-    "type": "CHE",
-    "problems": [
-      { "id": "c1", "q": "水の化学式は？", "answers": ["H2O", "H₂O"] },
-      { "id": "c2", "q": "原子番号1の元素は？", "answers": ["H", "Hydrogen", "水素"] },
-      { "id": "c3", "q": "モルの単位記号は？", "answers": ["mol"] }
-    ]
-  }
-]
+{
+  "dungeons": [
+    {
+      "id": "phy_waves",
+      "name": "波の基礎",
+      "type": "phy",
+      "questions": [
+        { "q": "音波は媒質の_________波（縦/横）？", "a": "縦", "type": "phy" },
+        { "q": "光は真空中で約_________ m/s（数字のみ）", "a": "299792458", "type": "phy" }
+      ]
+    },
+    {
+      "id": "che_atoms",
+      "name": "原子・分子入門",
+      "type": "che",
+      "questions": [
+        { "q": "水の化学式は？", "a": "H2O", "type": "che" },
+        { "q": "二酸化炭素の化学式は？", "a": "CO2", "type": "che" }
+      ]
+    },
+    {
+      "id": "bio_cells",
+      "name": "細胞の基礎",
+      "type": "bio",
+      "questions": [
+        { "q": "エネルギー通貨と呼ばれる物質は？", "a": "ATP", "type": "bio" },
+        { "q": "細胞の基本単位は？", "a": "細胞", "type": "bio" }
+      ]
+    }
+  ]
+}
