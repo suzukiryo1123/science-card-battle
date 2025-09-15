@@ -12,6 +12,24 @@
     <p class="subtitle"><a href="./">← カード一覧に戻る</a></p>
   </header>
 
+  <!-- プロフィール & 戦績操作 -->
+  <section id="profile" class="profile-box">
+    <div class="row">
+      <label for="studentId">生徒ID（8桁）</label>
+      <input id="studentId" type="text" inputmode="numeric" pattern="\d{8}" placeholder="例: 12345678" maxlength="8">
+    </div>
+    <div class="row">
+      <label for="nickname">ニックネーム</label>
+      <input id="nickname" type="text" placeholder="例: RIKA_TARO">
+    </div>
+    <div class="row actions">
+      <button id="saveProfile" class="btn">プロフィール保存</button>
+      <button id="exportCsv" class="btn secondary">戦績CSVをダウンロード</button>
+      <span id="profileMsg" class="hint"></span>
+    </div>
+  </section>
+
+  <!-- セットアップ -->
   <section id="setup">
     <h2>セットアップ</h2>
     <div class="setup-row">
@@ -22,10 +40,11 @@
       <label>ダンジョンを2つ選ぶ：</label>
       <div id="dungeonList"></div>
     </div>
-    <button id="startBtn">対戦スタート</button>
+    <button id="startBtn" class="btn">対戦スタート</button>
     <p class="note">※ 今はCPU対戦＆各カードのタイプ攻撃力を使用（じゃんけんは後で追加）</p>
   </section>
 
+  <!-- バトル -->
   <main id="battle" style="display:none">
     <div class="hp-wrap">
       <div class="side">
@@ -50,7 +69,7 @@
       <h2 id="question">問題が読み込み中…</h2>
       <div class="answer-box">
         <input type="text" id="answerInput" placeholder="ここに解答を入力（Enterで送信）" autocomplete="off" />
-        <button id="submitBtn">解答する</button>
+        <button id="submitBtn" class="btn">解答する</button>
       </div>
       <div class="msg" id="msg"></div>
     </section>
