@@ -28,7 +28,7 @@ const normalize = (s) => String(s ?? '').trim().toLowerCase();
 const beats = { phy:'che', che:'bio', bio:'phy' };
 const rpsOutcome = (a, b) => a === b ? 0 : (beats[a] === b ? 1 : -1);
 
-// 残り時間倍率：20s→2.0、10s→1.0、10s未満は1.0に頭打ち
+// 残り時間倍率：20s→2.0、10s→1.0、10s未満は1.0
 const timeMult = (remainMs) => {
   const remain = remainMs / 1000;
   return clamp(1 + (remain - 10) / 10, 1, 2);
@@ -41,22 +41,27 @@ let dgs   = [];   // data/dungeons.json の dungeons（{id,name,questions:[{q,a}
 // ================= 対戦状態 =================
 let player = null, cpu = null;
 let myDungeonIds = [], cpuDungeonIds = [];
-let pPool = [], cPool = [];   // ★ プレイヤー/CPUで独立した出題プール
+let pPool = [], cPool = [];   // プレイヤー/CPUで独立プール
 let match = { p:0, c:0, set:0 };
 
 let pChoice='phy', cChoice='phy';
 let pRpsMul=1.0,  cRpsMul=1.0;
 
 let setOver = false;
+let setToken = 0;            // ★ セット識別トークン（古いコールバック無効化用）
 
 // プレイヤー用の現在問題とタイマー
-let pQ = null, pDeadline = 0, pRafId = null, pEndTimerId = null;
+let pQ = null, pDeadline = 0, pRafId = null, pEndTimerId = null, pNextQTimerId = null;
 
 // CPU用の現在問題とタイマー
-let cQ = null, cDeadline = 0, cAnswerTimerId = null, cEndTimerId = null;
+let cQ = null, cDeadline = 0, cAnswerTimerId = null, cEndTimerId = null, cNextQTimerId = null;
 
 // セット間の準備フラグ
 let pReadyNext = false, cReadyNext = false;
+
+// 選択/カウント制御
+let chooseTimerId = null, chooseDeadline = 0, choiceFinalized = false;
+let countdownId = null;
 
 // ================= 画面表示補助 =================
 const setBars = () => {
@@ -153,6 +158,23 @@ const makePoolFrom = (ids)=>{
   return arr;
 };
 
+// すべてのタイマー/RAFを止める（次セット前や終了時に必ず呼ぶ）
+function clearAllTimers(){
+  // 選択・カウントダウン
+  if (chooseTimerId) cancelAnimationFrame(chooseTimerId), chooseTimerId=null;
+  if (countdownId) clearInterval(countdownId), countdownId=null;
+
+  // プレイヤー側
+  if (pRafId) cancelAnimationFrame(pRafId), pRafId=null;
+  if (pEndTimerId) clearTimeout(pEndTimerId), pEndTimerId=null;
+  if (pNextQTimerId) clearTimeout(pNextQTimerId), pNextQTimerId=null;
+
+  // CPU側
+  if (cAnswerTimerId) clearTimeout(cAnswerTimerId), cAnswerTimerId=null;
+  if (cEndTimerId) clearTimeout(cEndTimerId), cEndTimerId=null;
+  if (cNextQTimerId) clearTimeout(cNextQTimerId), cNextQTimerId=null;
+}
+
 // ================= マッチ進行 =================
 function startMatch(){
   // カード
@@ -179,8 +201,15 @@ function startMatch(){
 }
 
 function nextSet(){
+  // ★ 古いタイマーは完全停止
+  clearAllTimers();
+
+  // ★ セット識別トークンを更新（古いコールバック無効化）
+  setToken++;
+
   match.set++; el('setCounter').textContent=String(match.set);
-  // HPリセット
+
+  // HPを確実に満タンへ
   player.hp = player.hpMax; cpu.hp = cpu.hpMax; setBars();
 
   // 出題プールは双方独立（同一合体元から別シャッフル）
@@ -200,31 +229,40 @@ function bestType(c){
   arr.sort((a,b)=>b[1]-a[1]); return arr[0][0];
 }
 
-let chooseTimerId=null, chooseDeadline=0;
 function startChoicePhase(){
   only('choiceBox','logBox');
   el('choiceResult').textContent='';
   el('pChoicePill').textContent='-'; el('cChoicePill').textContent='-'; el('rpsNote').textContent='';
   pChoice=null; cChoice=null; pRpsMul=1.0; cRpsMul=1.0;
 
+  // ★ 二重実行防止
+  choiceFinalized = false;
+
   // CPU はランダム選択
   cChoice = ['phy','che','bio'][Math.floor(Math.random()*3)];
 
   // 5秒カウント
   chooseDeadline = performance.now()+5000;
+  const myToken = setToken;
   const tick=()=>{
+    if (myToken !== setToken) return;  // 古い選択タイマーを無効化
     const remain=Math.max(0, chooseDeadline - performance.now());
     el('choiceTimer').textContent=(remain/1000).toFixed(1)+'s';
     if(remain<=0){ finalizeChoices(true); return; }
     chooseTimerId = requestAnimationFrame(tick);
   };
+  if (chooseTimerId) cancelAnimationFrame(chooseTimerId);
   chooseTimerId = requestAnimationFrame(tick);
 
   el('lockChoice').onclick = ()=>finalizeChoices(false);
 }
 
 function finalizeChoices(autoPick){
-  cancelAnimationFrame(chooseTimerId);
+  if (choiceFinalized) return; // ★ 二重起動ブロック
+  choiceFinalized = true;
+
+  if (chooseTimerId) cancelAnimationFrame(chooseTimerId), chooseTimerId=null;
+
   if(!pChoice){
     const sel=document.querySelector('input[name="atype"]:checked');
     pChoice = sel?sel.value : (autoPick?bestType(player):bestType(player));
@@ -252,10 +290,18 @@ function finalizeChoices(autoPick){
 
 function startCountdown(){
   only('countBox','logBox');
+  // ★ 二重起動防止（既存があれば消す）
+  if (countdownId) clearInterval(countdownId), countdownId=null;
+
   let n=5; el('countNum').textContent=String(n);
-  const id=setInterval(()=>{
+  const myToken = setToken;
+  countdownId = setInterval(()=>{
+    if (myToken !== setToken) { clearInterval(countdownId); countdownId=null; return; }
     n--; el('countNum').textContent=String(n);
-    if(n<=0){ clearInterval(id); startBattle(); }
+    if(n<=0){
+      clearInterval(countdownId); countdownId=null;
+      startBattle();
+    }
   },1000);
 }
 
@@ -285,18 +331,21 @@ function startPlayerQuestion(){
   const start = performance.now();
   pDeadline   = start + LIMIT_MS;
 
+  const myToken = setToken;
   const rafTick = ()=>{
-    if(setOver) return;
+    if (myToken !== setToken || setOver) return;
     const remain=Math.max(0, pDeadline - performance.now());
     el('timerLabel').textContent=(remain/1000).toFixed(1)+'s';
     if(remain<=0){
-      applyPenalty('p', 0); // 残り0sでペナルティ
-      setTimeout(startPlayerQuestion, 150); // あなた側だけ次へ
+      applyPenalty('p', 0);
+      pNextQTimerId = setTimeout(()=>{ if (myToken !== setToken) return; startPlayerQuestion(); }, 150);
     }else{
       pRafId = requestAnimationFrame(rafTick);
     }
   };
+  if (pRafId) cancelAnimationFrame(pRafId);
   pRafId = requestAnimationFrame(rafTick);
+  if (pEndTimerId) clearTimeout(pEndTimerId);
   pEndTimerId = setTimeout(()=>{/* safety */}, LIMIT_MS+50);
 }
 
@@ -317,17 +366,20 @@ function startCpuQuestion(){
   const start      = performance.now();
   cDeadline        = start + LIMIT_MS;
 
+  const myToken = setToken;
+  if (cAnswerTimerId) clearTimeout(cAnswerTimerId);
   cAnswerTimerId = setTimeout(()=>{
-    if(setOver) return;
+    if (myToken !== setToken || setOver) return;
     const remain = Math.max(0, cDeadline - performance.now());
     if(cpuCorrect){
       applyDamage('c', remain);   // CPUの与ダメ
     }else{
       applyPenalty('c', remain);  // CPUの自傷
     }
-    setTimeout(startCpuQuestion, 100); // CPUだけ次へ
+    cNextQTimerId = setTimeout(()=>{ if (myToken !== setToken) return; startCpuQuestion(); }, 100);
   }, Math.min(cpuTime, LIMIT_MS));
 
+  if (cEndTimerId) clearTimeout(cEndTimerId);
   cEndTimerId = setTimeout(()=>{/* safety */}, LIMIT_MS+50);
 }
 
@@ -374,12 +426,14 @@ function onSubmit(e){
   const ok     = normalize(ans) === normalize(pQ.a);
   const remain = Math.max(0, pDeadline - performance.now());
 
-  cancelAnimationFrame(pRafId); clearTimeout(pEndTimerId);
+  if (pRafId) cancelAnimationFrame(pRafId), pRafId=null;
+  if (pEndTimerId) clearTimeout(pEndTimerId), pEndTimerId=null;
 
   if(ok){ applyDamage('p', remain); }
   else { applyPenalty('p', remain); }
 
-  setTimeout(startPlayerQuestion, 150); // あなた側だけ次へ
+  const myToken = setToken;
+  pNextQTimerId = setTimeout(()=>{ if (myToken !== setToken) return; startPlayerQuestion(); }, 150); // あなた側だけ次へ
 }
 
 // ================= セット終了 → 待機（両者準備OKで次セット） =================
@@ -387,14 +441,14 @@ function endSet(){
   if(setOver) return;
   setOver = true;
 
-  // タイマー停止
-  cancelAnimationFrame(pRafId); clearTimeout(pEndTimerId);
-  clearTimeout(cAnswerTimerId); clearTimeout(cEndTimerId);
+  // ★ 全タイマー停止（残りが次セットに食い込まないように）
+  clearAllTimers();
 
   // 勝敗集計
   let winner = null;
   if(player.hp<=0 && cpu.hp<=0){
-    winner = (player.hp === cpu.hp) ? 'c' : (player.hp > player.hp ? 'p' : 'c');
+    // 同時ダウン → 残HP比較。同点ならCPU勝ち等のルール
+    winner = (player.hp === cpu.hp) ? 'c' : (player.hp > cpu.hp ? 'p' : 'c');
   }else{
     winner = (cpu.hp<=0) ? 'p' : 'c';
   }
@@ -410,7 +464,7 @@ function endSet(){
     return;
   }
 
-  // ★ セット間待機（両者準備OK）
+  // セット間待機（両者準備OK）
   pReadyNext=false; cReadyNext=false;
   el('betweenText').textContent = `セット${match.set} 終了：${winner==='p'?'あなたの勝ち':'CPUの勝ち'}（現在スコア あなた ${match.p} - ${match.c} CPU）`;
   el('readyStatus').textContent = 'あなた：未準備 ／ CPU：未準備';
@@ -434,7 +488,7 @@ function updateReadyStatus(){
 
 function tryStartNextSetWhenBothReady(){
   if(!(pReadyNext && cReadyNext)) return;
-  nextSet();
+  nextSet();                  // HPリセット＆トークン更新＆全タイマー初期化
   only('choiceBox','logBox'); // 次セットのタイプ選択へ
 }
 
