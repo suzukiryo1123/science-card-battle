@@ -112,3 +112,15 @@ body {
   border-radius:.5rem; cursor:pointer; }
 #submitBtn:hover { background:#222; }
 
+/* プロフィール/ボタン */
+.profile-box { max-width: 760px; margin: 0 auto 10px; padding: 12px; background:#121821; border:1px solid #2b3749; border-radius:12px; }
+.profile-box .row { display:flex; gap:12px; align-items:center; margin:.4rem 0; }
+.profile-box .row label { width: 150px; color:#bda88b; }
+.profile-box input { flex:1; padding:.6rem .8rem; background:#111; color:#eee; border:1px solid #555; border-radius:.5rem; }
+.profile-box .actions { justify-content:flex-start; }
+.btn { padding:.6rem .9rem; border:1px solid #555; background:#111; color:#eee; border-radius:.5rem; cursor:pointer; }
+.btn:hover { background:#222; }
+.btn.secondary { opacity:.9; }
+.hint { color:#9aa4b2; font-size:.9rem; margin-left:10px; }
+
+
