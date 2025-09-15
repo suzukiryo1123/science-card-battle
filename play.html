@@ -38,7 +38,9 @@
       1マッチ最大3セット（2先取）。各セット開始時に5秒で PHY / CHE / BIO を選択し、
       <b>じゃんけん</b>（PHY▶CHE▶BIO▶PHY）で 倍率：勝×1.5 / 負×0.5 / あいこ×1.0。<br>
       問題にはタイプを持たせません。ダメージ＝選択タイプ攻撃値 × RPS倍率 × 残り時間倍率（20s→2.0、10s→1.0）。
-      不正解時は残り時間に応じた<b>ペナルティ</b>で自分にダメージ。
+      不正解時は残り時間に応じた<b>ペナルティ</b>で自分にダメージ。<br>
+      ※ 今回から「各プレイヤーは正誤で<b>独立に次の問題へ進行</b>」し、セット終了後は
+      両者の「準備OK」ボタンで次セットへ進みます。
     </p>
   </header>
 
@@ -143,7 +145,15 @@
     <div id="log" class="log"></div>
   </section>
 
-  <!-- ⑦ 結果画面 -->
+  <!-- ★ ⑦ セット終了：次のセット待機（追加） -->
+  <section id="betweenBox" class="screen box" style="margin-top:12px">
+    <h2>セット終了</h2>
+    <div id="betweenText" class="q"></div>
+    <button id="nextSetBtn">次のセットへ進む（準備OK）</button>
+    <div class="muted" id="readyStatus" style="margin-top:6px"></div>
+  </section>
+
+  <!-- ⑧ マッチ結果 -->
   <section id="resultBox" class="screen box" style="margin-top:12px">
     <h2>マッチ結果</h2>
     <div id="resultText" class="q"></div>
