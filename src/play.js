@@ -24,6 +24,31 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const fmtHp = (x) => Math.max(0, Math.round(x));
 const normalize = (s) => String(s ?? '').trim().toLowerCase();
 
+// === セット結果を localStorage に保存 ===
+function saveSetResult({ winner, selectedType, matchSet, pStats, cStats, pCard, cCard }) {
+  const key = 'scb_results_v1';
+  const rec = {
+    t: new Date().toISOString(),
+    set: matchSet,
+    type: selectedType,
+    winner, // 'p' | 'c'
+    player: {
+      correct: pStats.correct,
+      total:   pStats.total,
+      avgSec:  pStats.times.length ? (pStats.times.reduce((a,b)=>a+b,0)/pStats.times.length) : null
+    },
+    cpu: {
+      correct: cStats.correct,
+      total:   cStats.total,
+      avgSec:  cStats.times.length ? (cStats.times.reduce((a,b)=>a+b,0)/cStats.times.length) : null
+    },
+    cards: { player: pCard?.name, cpu: cCard?.name }
+  };
+  const arr = JSON.parse(localStorage.getItem(key) || '[]');
+  arr.push(rec);
+  localStorage.setItem(key, JSON.stringify(arr));
+}
+
 // じゃんけん（PHY▶CHE▶BIO▶PHY）
 const beats = { phy:'che', che:'bio', bio:'phy' };
 const rpsOutcome = (a, b) => a === b ? 0 : (beats[a] === b ? 1 : -1);
@@ -39,6 +64,10 @@ let cards = [];   // data/cards.json（{name,type,hp,phy,che,bio,image}）
 let dgs   = [];   // data/dungeons.json の dungeons（{id,name,questions:[{q,a}]}）
 
 // ================= 対戦状態 =================
+// === 戦績（1セットぶん） ===
+let statsP = { correct: 0, total: 0, times: [] }; // あなた
+let statsC = { correct: 0, total: 0, times: [] }; // CPU
+
 let player = null, cpu = null;
 let myDungeonIds = [], cpuDungeonIds = [];
 let pPool = [], cPool = [];   // プレイヤー/CPUで独立プール
@@ -211,6 +240,10 @@ function nextSet(){
 
   // HPを確実に満タンへ
   player.hp = player.hpMax; cpu.hp = cpu.hpMax; setBars();
+    // 戦績リセット（このセットの集計）
+  statsP = { correct: 0, total: 0, times: [] };
+  statsC = { correct: 0, total: 0, times: [] };
+
 
   // 出題プールは双方独立（同一合体元から別シャッフル）
   const idsMerged = [...new Set([...myDungeonIds, ...cpuDungeonIds])];
@@ -372,8 +405,15 @@ function startCpuQuestion(){
     if (myToken !== setToken || setOver) return;
     const remain = Math.max(0, cDeadline - performance.now());
     if(cpuCorrect){
+      statsC.total++;
+  　　const elapsedCpu = Math.min(cpuTime, LIMIT_MS) / 1000;
+  　　statsC.times.push(elapsedCpu);
+  　　statsC.correct++;
       applyDamage('c', remain);   // CPUの与ダメ
     }else{
+      statsC.total++;
+  　　const elapsedCpu = Math.min(cpuTime, LIMIT_MS) / 1000;
+  　　statsC.times.push(elapsedCpu);
       applyPenalty('c', remain);  // CPUの自傷
     }
     cNextQTimerId = setTimeout(()=>{ if (myToken !== setToken) return; startCpuQuestion(); }, 100);
@@ -425,6 +465,12 @@ function onSubmit(e){
   const ans    = el('answerInput').value;
   const ok     = normalize(ans) === normalize(pQ.a);
   const remain = Math.max(0, pDeadline - performance.now());
+    // 戦績（あなた）
+  statsP.total++;
+  const elapsedMs = LIMIT_MS - remain; // 回答にかかった時間
+  statsP.times.push(elapsedMs / 1000);
+  if (ok) statsP.correct++;
+
 
   if (pRafId) cancelAnimationFrame(pRafId), pRafId=null;
   if (pEndTimerId) clearTimeout(pEndTimerId), pEndTimerId=null;
@@ -455,6 +501,21 @@ function endSet(){
   if(winner==='p') match.p++; else match.c++;
   el('scoreP').textContent=String(match.p);
   el('scoreC').textContent=String(match.c);
+    // ローカル保存（このセットの結果）
+  const winnerCode = (player.hp<=0 && cpu.hp<=0)
+    ? ((player.hp === cpu.hp) ? 'c' : (player.hp > cpu.hp ? 'p' : 'c'))
+    : (cpu.hp<=0 ? 'p' : 'c');
+
+  saveSetResult({
+    winner: winnerCode,
+    selectedType: pChoice || 'phy',
+    matchSet: match.set,
+    pStats: statsP,
+    cStats: statsC,
+    pCard: player,
+    cCard: cpu
+  });
+
 
   // マッチ終了か？
   if(match.p===2 || match.c===2 || match.set===3){
@@ -496,51 +557,3 @@ function tryStartNextSetWhenBothReady(){
 el('startBtn')?.addEventListener('click', startMatch);
 el('answerForm')?.addEventListener('submit', onSubmit);
 
-// ① 起動時に読み込み
-let PROBLEMS = { PHY: [], CHE: [], BIO: [] };
-async function loadProblems() {
-const res = await fetch('data/problems.json', { cache: 'no-store' });
-PROBLEMS = await res.json();
-}
-
-
-// ② タイプごとの問題プールから本セットの10問を作成
-function pickQuestions(typeKey) {
-const pool = [...(PROBLEMS[typeKey] || [])];
-// シャッフル
-for (let i = pool.length - 1; i > 0; i--) {
-const j = Math.floor(Math.random() * (i + 1));
-[pool[i], pool[j]] = [pool[j], pool[i]];
-}
-return pool.slice(0, 10);
-}
-
-
-// ③ セット開始時に呼ぶ（既存のセット開始ハンドラ内で）
-let currentSetQuestions = [];
-function startSetWithType(selectedType) {
-currentSetQuestions = pickQuestions(selectedType); // 10問確定
-// 以降は currentSetQuestions[questionIndex] を参照して出題
-}
-
-
-// ④ 回答チェック（数値はtrim＆単位無視、文字は全角半角の基本正規化）
-function normalizeAnswer(s) {
-return (s + '').trim().replace(/\s+/g, '');
-}
-function isCorrect(userInput, q) {
-const ua = normalizeAnswer(userInput);
-const ans = normalizeAnswer(q.answer);
-if (!isNaN(parseFloat(ans)) && isFinite(ans)) {
-const x = parseFloat(ua), y = parseFloat(ans);
-if (!isNaN(x)) {
-const rel = Math.abs(x - y) / Math.max(1, Math.abs(y));
-return rel < 0.0001; // ほぼ一致（将来±2%などに拡張可）
-}
-}
-return ua === ans;
-}
-
-
-// ⑤ ウィンドウロードで問題読込
-window.addEventListener('load', () => { loadProblems(); });
