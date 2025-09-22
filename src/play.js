@@ -495,3 +495,52 @@ function tryStartNextSetWhenBothReady(){
 // ================= 起動時バインド（最後） =================
 el('startBtn')?.addEventListener('click', startMatch);
 el('answerForm')?.addEventListener('submit', onSubmit);
+
+// ① 起動時に読み込み
+let PROBLEMS = { PHY: [], CHE: [], BIO: [] };
+async function loadProblems() {
+const res = await fetch('data/problems.json', { cache: 'no-store' });
+PROBLEMS = await res.json();
+}
+
+
+// ② タイプごとの問題プールから本セットの10問を作成
+function pickQuestions(typeKey) {
+const pool = [...(PROBLEMS[typeKey] || [])];
+// シャッフル
+for (let i = pool.length - 1; i > 0; i--) {
+const j = Math.floor(Math.random() * (i + 1));
+[pool[i], pool[j]] = [pool[j], pool[i]];
+}
+return pool.slice(0, 10);
+}
+
+
+// ③ セット開始時に呼ぶ（既存のセット開始ハンドラ内で）
+let currentSetQuestions = [];
+function startSetWithType(selectedType) {
+currentSetQuestions = pickQuestions(selectedType); // 10問確定
+// 以降は currentSetQuestions[questionIndex] を参照して出題
+}
+
+
+// ④ 回答チェック（数値はtrim＆単位無視、文字は全角半角の基本正規化）
+function normalizeAnswer(s) {
+return (s + '').trim().replace(/\s+/g, '');
+}
+function isCorrect(userInput, q) {
+const ua = normalizeAnswer(userInput);
+const ans = normalizeAnswer(q.answer);
+if (!isNaN(parseFloat(ans)) && isFinite(ans)) {
+const x = parseFloat(ua), y = parseFloat(ans);
+if (!isNaN(x)) {
+const rel = Math.abs(x - y) / Math.max(1, Math.abs(y));
+return rel < 0.0001; // ほぼ一致（将来±2%などに拡張可）
+}
+}
+return ua === ans;
+}
+
+
+// ⑤ ウィンドウロードで問題読込
+window.addEventListener('load', () => { loadProblems(); });
