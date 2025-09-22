@@ -48,6 +48,62 @@ function saveSetResult({ winner, selectedType, matchSet, pStats, cStats, pCard, 
   arr.push(rec);
   localStorage.setItem(key, JSON.stringify(arr));
 }
+// === 戦績読み出し＆表示 ===
+function readResults(){
+  try { return JSON.parse(localStorage.getItem('scb_results_v1') || '[]'); }
+  catch { return []; }
+}
+function summarizeResults(rows){
+  const s = { total: rows.length, winP:0, winC:0, byType:{phy:0,che:0,bio:0}, avgP:null, avgC:null };
+  let sp=0, cp=0, np=0, nc=0;
+  rows.forEach(r=>{
+    if(r.winner==='p') s.winP++; else s.winC++;
+    if(r.type && s.byType[r.type]!=null) s.byType[r.type]++;
+    if(r.player?.avgSec!=null){ sp+=r.player.avgSec; np++; }
+    if(r.cpu?.avgSec!=null){    cp+=r.cpu.avgSec;   nc++; }
+  });
+  s.avgP = np? sp/np : null; s.avgC = nc? cp/nc : null;
+  return s;
+}
+function showStatsOverlay(){
+  const rows = readResults();
+  const s = summarizeResults(rows);
+  const rate = s.total? Math.round((s.winP/s.total)*100) : 0;
+
+  // 初回だけUI生成
+  if(!document.getElementById('statsOverlay')){
+    const ov = document.createElement('div');
+    ov.id='statsOverlay';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    ov.innerHTML = `
+      <div id="statsPanel" style="min-width:320px;max-width:520px;background:#fff;border-radius:14px;padding:16px 18px;box-shadow:0 10px 30px rgba(0,0,0,.25);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h3 style="margin:0">戦績</h3>
+          <button id="closeStats" style="padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#f7f7f7;cursor:pointer">閉じる</button>
+        </div>
+        <div id="statsContent" style="font-size:14px;line-height:1.6"></div>
+      </div>`;
+    document.body.appendChild(ov);
+    document.getElementById('closeStats').onclick = ()=> ov.remove();
+  }
+
+  const content = document.getElementById('statsContent');
+  const last5 = rows.slice(-5).reverse().map(r=>{
+    const t = (r.type||'').toUpperCase();
+    const w = r.winner==='p'?'○':'×';
+    const ps = r.player?.avgSec!=null ? `${r.player.avgSec.toFixed(1)}s` : '-';
+    const cs = r.cpu?.avgSec!=null    ? `${r.cpu.avgSec.toFixed(1)}s`    : '-';
+    return `Set${r.set} ${t} / あなた${w} / あなた${ps}・CPU${cs}`;
+  }).join('<br>');
+
+  content.innerHTML = `
+    対戦数：${s.total}　勝率：${rate}%（あなた ${s.winP}勝 / CPU ${s.winC}勝）<br>
+    タイプ内訳：PHY ${s.byType.phy}・CHE ${s.byType.che}・BIO ${s.byType.bio}<br>
+    平均解答時間：あなた ${s.avgP? s.avgP.toFixed(1)+'s':'-'} ／ CPU ${s.avgC? s.avgC.toFixed(1)+'s':'-'}<hr>
+    直近5セット：<br>${last5 || '—'}
+  `;
+}
+
 
 // じゃんけん（PHY▶CHE▶BIO▶PHY）
 const beats = { phy:'che', che:'bio', bio:'phy' };
@@ -163,6 +219,20 @@ async function loadAll(){
   });
 }
 document.addEventListener('DOMContentLoaded', loadAll);
+
+// 結果画面に「戦績を見る」ボタンを追加
+document.addEventListener('DOMContentLoaded', ()=>{
+  const box = document.getElementById('resultBox');
+  if(!box) return;
+  if(document.getElementById('viewStatsBtn')) return; // 二重生成防止
+  const btn = document.createElement('button');
+  btn.id = 'viewStatsBtn';
+  btn.textContent = '戦績を見る';
+  btn.style.cssText = 'margin-top:8px;padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#f7f7f7;cursor:pointer';
+  btn.onclick = showStatsOverlay; // 追加①で定義済みの関数
+  box.appendChild(btn);
+});
+
 
 // ================= 共通処理 =================
 const pickSelected = (rootId)=>{
